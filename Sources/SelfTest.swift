@@ -432,6 +432,50 @@ enum SelfTest {
     // 写这个是因为踩过坑:kTCCServiceAudioCapture 曾经不在列表里,
     // 于是音频录制事件被静默丢掉 —— 界面上完全看不出来。
     // 少数据比多数据危险得多。
+    /// 实时流挂掉后的回收自检。
+    ///
+    /// 造一个「启动、输出一行、立刻退出」的子进程来模拟 `log stream` 挂掉,
+    /// 验证应用会识别管道 EOF、收摊并切到轮询兜底 —— 而不是让管道回调空转。
+    static func logStreamTest() -> Int32 {
+        let streamer = LogStreamer()
+        streamer.streamExecutable = URL(fileURLWithPath: "/bin/sh")
+        streamer.streamArguments = ["-c", "printf 'stub-line\\n'; exit 0"]
+
+        var lines: [String] = []
+        var statuses: [String] = []
+        streamer.onLine = { lines.append($0) }
+        streamer.onStatus = { statuses.append($0) }
+
+        print("BigBrother 实时流回收自检")
+        print("══════════════════════════════════════════════════════════════")
+        streamer.start()
+        let deadline = Date().addingTimeInterval(10)
+        while streamer.streamExits == 0 && Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+        let cpu = ProcessInfo.processInfo.systemUptime
+        // 再空转一小会儿,确认没有回调在里面打转
+        let settle = Date().addingTimeInterval(2)
+        while Date() < settle { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+        let elapsed = ProcessInfo.processInfo.systemUptime - cpu
+
+        print(pad("读出日志行", 16) + "\(lines.count) 行")
+        print(pad("识别到流退出", 16) + "\(streamer.streamExits) 次")
+        print(pad("当前模式", 16) + streamer.mode.rawValue)
+        print(pad("状态提示", 16) + (statuses.last ?? "-"))
+        print(pad("空转耗时", 16) + String(format: "%.2f 秒", elapsed))
+        streamer.stop()
+
+        var ok = true
+        if streamer.streamExits != 1 { print("✗ 子进程退出后没有收摊,管道回调会一直空转"); ok = false }
+        if !lines.contains("stub-line") { print("✗ 退出前读到的行丢了"); ok = false }
+        if streamer.mode != .poll { print("✗ 没有切到轮询兜底,采集会失联"); ok = false }
+        print("──────────────────────────────────────────────────────────────")
+        print(ok ? "✓ 出口回收正常:EOF 被识别、已切轮询、无空转"
+                 : "✗ 回收异常,管道回调可能在烧 CPU")
+        return ok ? 0 : 1
+    }
+
     /// 只跑定位通道:定位不走 TCC,单独一条管线,单独一个诊断入口。
     static func locationScan(files: [String]) -> Int32 {
         guard !files.isEmpty else {

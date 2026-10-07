@@ -159,6 +159,7 @@ final class Monitor: ObservableObject {
                 + "距上次数据=\(String(format: "%.1f", since))s "
                 + "解析器pending=\(self.parser.pendingCount) "
                 + "会话表=\(self.store.openSessionCount) "
+                + "流退出=\(self.streamer.streamExits) "
                 + "写失败=\(self.store.writeFailures)")
         }
         RunLoop.main.add(hb, forMode: .common)

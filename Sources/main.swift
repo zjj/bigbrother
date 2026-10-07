@@ -39,6 +39,8 @@ if arguments.count >= 2 {
         exit(SelfTest.drillTest(files: Array(arguments.dropFirst(2))))
     case "--coverage-test":
         exit(SelfTest.coverageTest(files: Array(arguments.dropFirst(2))))
+    case "--stream-test":
+        exit(SelfTest.logStreamTest())
     case "--locscan":
         exit(SelfTest.locationScan(files: Array(arguments.dropFirst(2))))
     case "--names-test":
@@ -54,6 +56,7 @@ if arguments.count >= 2 {
                 BigBrother --selftest <日志>…  仅解析日志并打印
                 BigBrother --scan <日志>…      解析 → 落库 → 输出聚合报告
                 BigBrother --locscan <日志>…   只看定位通道(不走 TCC)
+                BigBrother --stream-test       验证实时流挂掉后能被回收
 
               环境变量:
                 BIGBROTHER_DB   覆盖 SQLite 数据库路径

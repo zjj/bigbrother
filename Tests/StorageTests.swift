@@ -15,6 +15,7 @@ enum StorageTests {
         try testEvidenceScopes(in: directory)
         try testAlreadyAuthorizedScreenAccess(in: directory)
         testCameraInUseChannel()
+        try testLogStreamEOF(in: directory)
         testRecordingActivity()
 
         let database = directory.appendingPathComponent("records/events.db")
@@ -781,6 +782,43 @@ enum StorageTests {
         precondition(store.todayCounts().first { $0.0 == .camera }?.1 == 2)
         precondition(store.todaySubjects().first { $0.identifier == "com.tencent.xinWeChat" }?.n == 2)
         print("PASS: camera-in-use is recorded even when tccd logs nothing")
+    }
+
+    /// 实时流子进程退出(管道 EOF)后必须收摊。
+    ///
+    /// 踩过的坑:管道写端关闭后 `readabilityHandler` 会以极高频率反复触发,
+    /// 每次都返回空数据;旧写法拿到空数据就 `return`,于是变成烧满一个核的
+    /// 空转循环 —— 实测应用因此跑到 199% CPU,四条 fd 监控线程里
+    /// 1518/1616 全耗在这个回调上,而子进程一个都不剩。
+    private static func testLogStreamEOF(in directory: URL) throws {
+        precondition(LogStreamer.isEndOfFile(Data()), "空数据就是 EOF")
+        precondition(!LogStreamer.isEndOfFile(Data([0x41])), "有数据不是 EOF")
+
+        let streamer = LogStreamer()
+        // 用一个立刻退出的子进程模拟 log stream 挂掉
+        streamer.streamExecutable = URL(fileURLWithPath: "/bin/sh")
+        streamer.streamArguments = ["-c", "printf 'hello\\n'; exit 0"]
+
+        var lines: [String] = []
+        var statuses: [String] = []
+        streamer.onLine = { lines.append($0) }
+        streamer.onStatus = { statuses.append($0) }
+
+        streamer.start()
+        // 等子进程退出、EOF 被处理
+        let deadline = Date().addingTimeInterval(8)
+        while streamer.streamExits == 0 && Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+
+        precondition(streamer.streamExits == 1,
+                     "子进程退出后必须识别为 EOF 并收摊(实际 \(streamer.streamExits))")
+        precondition(lines.contains("hello"), "退出前读到的那行不能丢: \(lines)")
+        precondition(streamer.mode == .poll, "退出后要切到轮询兜底,不能就此失联")
+        precondition(statuses.contains { $0.contains("轮询") },
+                     "要明确告诉用户已切轮询: \(statuses)")
+        streamer.stop()
+        print("PASS: stream EOF is reclaimed instead of spinning a core")
     }
 
     private static func testRecordingActivity() {
