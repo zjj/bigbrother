@@ -62,13 +62,15 @@ make run
 make dmg
 ```
 
-DMG 文件会生成在 `dist/BigBrother.dmg`。
+DMG 文件会生成在 `dist/BigBrother-<commit号>.dmg`，其中 commit 号与应用内记录的 Git commit ID 一致。
 
 默认使用本地签名。正式分发时可指定开发者签名身份：
 
 ```bash
 make dmg CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)"
 ```
+
+或者运行 `make sign-dmg`：会自动使用唯一的 Developer ID Application 身份；如果有多个，会在同一次运行中提示选择。此目标会对应用和 DMG 都进行签名，并验证 DMG 签名。
 
 公开分发还需完成 Apple 公证。
 
