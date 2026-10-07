@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>BigBrother</string>
+	<key>CFBundleDisplayName</key>
+	<string>BigBrother</string>
+	<key>CFBundleExecutable</key>
+	<string>BigBrother</string>
+	<!-- 正式发布请替换为你自己的反向域名。local. 前缀表示 ad-hoc 本地构建,
+	     本工具自身也会如实地把自己判定为「身份不可验证」。 -->
+	<key>CFBundleIdentifier</key>
+	<string>local.bigbrother</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.2.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<!-- 只驻留菜单栏,不显示 Dock 图标 -->
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>只读系统统一日志,不访问屏幕,不需要完全磁盘访问。</string>
+</dict>
+</plist>
