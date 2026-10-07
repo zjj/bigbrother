@@ -8,6 +8,9 @@
 	<string>BigBrother</string>
 	<key>CFBundleExecutable</key>
 	<string>BigBrother</string>
+	<!-- 由 Tools/make-icon.py 从 icon.png 生成,见 Makefile 的 icon 目标 -->
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<!-- 正式发布请替换为你自己的反向域名。local. 前缀表示 ad-hoc 本地构建,
 	     本工具自身也会如实地把自己判定为「身份不可验证」。 -->
 	<key>CFBundleIdentifier</key>

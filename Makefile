@@ -11,11 +11,34 @@ TARGET_OS := 13.0
 ARCH := $(shell uname -m)
 CODESIGN_IDENTITY ?= -
 
-.PHONY: all build dmg sign-dmg run test test-storage test-panel clean
+.PHONY: all icon build install dmg sign-dmg run test test-storage test-panel clean
+
+PYTHON ?= $(shell for c in "$$DSH_PYTHON" \
+	/Users/jj/.dsh/dsh-runtimes/dsh-primary-runtime/dependencies/python/bin/python3 \
+	python3 python3.12 python3.11; do \
+	[ -n "$$c" ] || continue; \
+	p="$$(command -v "$$c" 2>/dev/null || echo "$$c")"; \
+	[ -x "$$p" ] || continue; \
+	"$$p" -c 'import PIL' 2>/dev/null || continue; \
+	echo "$$p"; break; \
+done)
 
 all: build
 
-build:
+# 应用图标:从 Resources/icon.png 生成 Resources/AppIcon.icns。
+# 源图是「完全不透明的方图 + 一圈白边」,直接当图标用会在访达/通知里显示成
+# 白底方块。这一步把它修成带透明边距、超椭圆圆角的标准形态,
+# 已经是规范形态的源图则原样放行。详见 Tools/make-icon.py 的注释。
+icon: Resources/AppIcon.icns
+
+Resources/AppIcon.icns: Resources/icon.png Tools/make-icon.py
+	@if [[ -z "$(PYTHON)" ]]; then \
+		echo "错误: 生成图标需要带 Pillow 的 python3(例:python3 -m pip install pillow)"; \
+		exit 1; \
+	fi
+	@$(PYTHON) Tools/make-icon.py
+
+build: icon
 	@if [[ -z "$(COMMIT_ID)" ]]; then \
 		echo "错误: 无法获取 Git commit ID"; \
 		exit 1; \
@@ -39,6 +62,7 @@ build:
 	@echo "▸ 打包"
 	@cp "$(BUILD_DIR)/$(APP_NAME)" "$(APP)/Contents/MacOS/"
 	@cp Resources/Info.plist "$(APP)/Contents/"
+	@cp Resources/AppIcon.icns "$(APP)/Contents/Resources/"
 	@/usr/libexec/PlistBuddy -c "Add :BigBrotherCommit string $(COMMIT_ID)" "$(APP)/Contents/Info.plist"
 	@printf 'APPL????' > "$(APP)/Contents/PkgInfo"
 	@echo "▸ 代码签名", "$(CODESIGN_IDENTITY)"
@@ -89,6 +113,18 @@ sign-dmg:
 	codesign --force --timestamp --sign "$$identity" "$(DMG)"; \
 	codesign --verify --verbose=2 "$(DMG)"; \
 	echo "✓ DMG 签名完成: $(DMG)"
+
+# 装到 /Applications 并刷新图标缓存。
+#
+# 为什么要这一步:菜单栏应用的实际运行副本通常在 /Applications,而
+# LaunchServices 的图标缓存按 bundle id 认路径 —— 只重建 dist/ 里的包,
+# 访达/通知里看到的仍是旧副本(实测旧副本没有 CFBundleIconFile,图标是空的)。
+install: build
+	@echo "▸ 安装到 /Applications"
+	@rm -rf "/Applications/$(APP_NAME).app"
+	@ditto "$(APP)" "/Applications/$(APP_NAME).app"
+	@/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "/Applications/$(APP_NAME).app"
+	@echo "✓ 已安装: /Applications/$(APP_NAME).app"
 
 run: build
 	@echo "▸ 启动 $(APP_NAME)"
