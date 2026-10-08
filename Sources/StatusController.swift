@@ -45,7 +45,7 @@ final class StatusController: NSObject {
     private var deactivateObserver: NSObjectProtocol?
     private(set) var isPanelShown = false
     private var presentationGeneration = 0
-    private var overviewHeight: CGFloat?
+    private var contentHeights: [PanelTab: CGFloat] = [:]
 
     /// 面板打开的时刻。用来防止「刚打开就因为失焦被自己关掉」——
     /// 那会退化成另一种形式的「要点两次」。
@@ -74,11 +74,11 @@ final class StatusController: NSObject {
         // Esc 收起:交给 SwiftUI 的 onExitCommand,避免申请输入监控权限
         monitor.requestClose = { [weak self] in self?.closePanel() }
         monitor.requestFocus = { [weak self] in self?.restorePanelFocus() }
-        let host = NSHostingController(rootView: PanelView(monitor: monitor) { [weak self] height in
+        let host = NSHostingController(rootView: PanelView(monitor: monitor) { [weak self] tab, height in
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                self.overviewHeight = height
-                if self.isPanelShown { self.updatePanelFrame() }
+                self.contentHeights[tab] = height
+                if self.isPanelShown && tab == self.monitor.tab { self.updatePanelFrame() }
             }
         })
         panel.contentViewController = host
@@ -126,6 +126,13 @@ final class StatusController: NSObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in self?.updateBadge() }
             .store(in: &cancellables)
+        monitor.$tab
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self, self.isPanelShown else { return }
+                self.updatePanelFrame()
+            }
+            .store(in: &cancellables)
 
         updateBadge()
     }
@@ -155,7 +162,8 @@ final class StatusController: NSObject {
               let screen = window.screen else { return }
         let anchor = window.convertToScreen(button.convert(button.bounds, to: nil))
         let frame = PanelLayout.frame(below: anchor, in: screen.visibleFrame,
-                                      contentHeight: overviewHeight)
+                                                                            contentHeight: contentHeights[monitor.tab]
+                                                                                ?? PanelLayout.minimumContentHeight)
         if panel.frame != frame { panel.setFrame(frame, display: false) }
     }
 

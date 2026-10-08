@@ -176,7 +176,13 @@ enum PanelLayoutTests {
         _ = NSApplication.shared
         let monitor = Monitor(store: EventStore(path: ":memory:"))
         var measuredHeight: CGFloat = 0
-        let host = NSHostingView(rootView: PanelView(monitor: monitor) { measuredHeight = $0 })
+        var measuredTab: PanelTab?
+        var pageHeights: [PanelTab: CGFloat] = [:]
+        let host = NSHostingView(rootView: PanelView(monitor: monitor) { tab, height in
+            measuredTab = tab
+            measuredHeight = height
+            pageHeights[tab] = height
+        })
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 600),
                               styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -191,8 +197,10 @@ enum PanelLayoutTests {
         }
 
         layout()
-        precondition(measuredHeight > 100 && measuredHeight < 600,
-                     "Empty overview must report its content height, not the viewport height")
+        precondition(measuredTab == .overview
+                 && measuredHeight >= OverviewTab.emptyContentMinHeight + 100
+                 && measuredHeight < 600,
+                 "Empty overview must reserve a spacious content area without filling the viewport")
         let emptyHeight = measuredHeight
         window.setContentSize(NSSize(width: 460, height: emptyHeight))
         layout()
@@ -206,8 +214,11 @@ enum PanelLayoutTests {
         let fullHeight = measuredHeight
         monitor.tab = .events
         layout()
-        precondition(measuredHeight == fullHeight, "Other tabs must preserve overview-based sizing")
+        precondition(measuredTab == .events && pageHeights[.events] != nil,
+                 "Each selected tab must report its own content height")
+        precondition(measuredHeight < fullHeight,
+                 "A short events page must not inherit the empty overview's whitespace")
         window.close()
-        print("PASS: actual overview height measurement, resizing stability and tab switching")
+        print("PASS: spacious empty overview, page-specific sizing and tab switching")
     }
 }

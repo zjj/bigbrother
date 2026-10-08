@@ -30,7 +30,8 @@ func eyeColor(level: Int, capturing: Bool) -> Color {
 
 private struct PanelContentSize: Equatable {
     var chrome: CGFloat = 0
-    var overview: CGFloat = 0
+    var content: CGFloat = 0
+    var tab: PanelTab?
 }
 
 private struct PanelContentSizeKey: PreferenceKey {
@@ -39,13 +40,16 @@ private struct PanelContentSizeKey: PreferenceKey {
     static func reduce(value: inout PanelContentSize, nextValue: () -> PanelContentSize) {
         let next = nextValue()
         value.chrome = max(value.chrome, next.chrome)
-        value.overview = max(value.overview, next.overview)
+        if next.content > 0 {
+            value.content = max(value.content, next.content)
+            value.tab = next.tab
+        }
     }
 }
 
 struct PanelView: View {
     @ObservedObject var monitor: Monitor
-    var onOverviewHeightChange: (CGFloat) -> Void = { _ in }
+    var onContentHeightChange: (PanelTab, CGFloat) -> Void = { _, _ in }
     @ScaledMetric(relativeTo: .body) private var fontScale = 1.0
 
     var body: some View {
@@ -93,14 +97,14 @@ struct PanelView: View {
                 .background(GeometryReader { geometry in
                     Color.clear.preference(
                         key: PanelContentSizeKey.self,
-                        value: PanelContentSize(overview: monitor.tab == .overview
-                                                ? geometry.size.height : 0))
+                        value: PanelContentSize(content: geometry.size.height,
+                                                tab: monitor.tab))
                 })
             }
         }
         .onPreferenceChange(PanelContentSizeKey.self) { size in
-            guard size.chrome > 0, size.overview > 0 else { return }
-            onOverviewHeightChange(ceil(size.chrome + size.overview))
+            guard size.chrome > 0, size.content > 0, let tab = size.tab else { return }
+            onContentHeightChange(tab, ceil(size.chrome + size.content))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(bg)
@@ -162,6 +166,8 @@ struct PanelView: View {
 // MARK: - 概览
 
 struct OverviewTab: View {
+    static let emptyContentMinHeight: CGFloat = 400
+
     @ObservedObject var monitor: Monitor
     @ScaledMetric(relativeTo: .body) private var fontScale = 1.0
 
@@ -169,12 +175,20 @@ struct OverviewTab: View {
                         GridItem(.flexible(), spacing: 8),
                         GridItem(.flexible(), spacing: 8)]
 
+    private var hasTodayRecords: Bool {
+        !monitor.todaySubjects.isEmpty || !monitor.todayCounts.isEmpty
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
 
             // ── 一句话说清今天发生了什么 ──
             // 不要操作说明。「点击任意条目下钻」这类提示本身就说明界面不合格。
             summary
+
+            if !hasTodayRecords {
+                Spacer(minLength: 0)
+            }
 
             // ── 主角:今天谁访问过 ──
             if !monitor.todaySubjects.isEmpty {
@@ -208,6 +222,9 @@ struct OverviewTab: View {
             sectionTitle("最近 24 小时的相关记录")
             Sparkline(values: monitor.histogram, endingAt: monitor.histogramEnd)
         }
+        .frame(maxWidth: .infinity,
+               minHeight: hasTodayRecords ? nil : Self.emptyContentMinHeight,
+               alignment: .topLeading)
     }
 
     /// 一句话摘要。这是用户打开应用后读到的第一句话。
@@ -522,6 +539,9 @@ struct EventsTab: View {
                     }
                 }
                 .font(.system(size: 12 * fontScale))
+                .onChange(of: monitor.filter.scope) { _ in
+                    monitor.refreshRecent()
+                }
                 Text("默认只显示系统能确认的访问。已授权的 App 每次访问都会记录在这里；「仅权限查询」里的记录没有拿到授权，「被拒或未知」里的记录结果不明确 —— 这两类都不算访问。")
                     .font(.system(size: 10 * fontScale))
                     .foregroundStyle(.secondary)
