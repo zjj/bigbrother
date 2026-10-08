@@ -22,6 +22,7 @@ final class Monitor: ObservableObject {
     @Published var notifyOnAlert = UserDefaults.standard.bool(forKey: "notifyOnAlert") {
         didSet { UserDefaults.standard.set(notifyOnAlert, forKey: "notifyOnAlert") }
     }
+    @Published private(set) var ignoredAppPermissions: [AppPermissionIgnoreRule] = []
     @Published var recent: [PrivacyEvent] = []
     @Published var topActors: [(name: String, n: Int)] = []
     @Published var histogram: [Int] = []
@@ -61,6 +62,9 @@ final class Monitor: ObservableObject {
     var onAlert: ((PrivacyEvent) -> Void)?
 
     let store: EventStore
+    private let preferences: UserDefaults
+    private let ignoredRulesLock = NSLock()
+    private var ignoredRulesStorage: [AppPermissionIgnoreRule] = []
     private let parser = TCCParser()
     private let locationParser = LocationParser()
     /// 摄像头另开一条通道:实测微信视频通话时 TCC 完全没有摄像头审计行,
@@ -73,8 +77,16 @@ final class Monitor: ObservableObject {
     private var heartbeatTimer: Timer?
     private var pruneTimer: Timer?
 
-    init(store: EventStore) {
+    private static let ignoredRulesKey = "ignoredAppPermissions"
+
+    init(store: EventStore, preferences: UserDefaults = .standard) {
         self.store = store
+        self.preferences = preferences
+        if let data = preferences.data(forKey: Self.ignoredRulesKey),
+           let rules = try? JSONDecoder().decode([AppPermissionIgnoreRule].self, from: data) {
+            ignoredRulesStorage = rules
+            ignoredAppPermissions = rules
+        }
         storageError = store.storageError
 
         parser.onEvent = { [weak self] e in self?.handle(e) }
@@ -94,7 +106,10 @@ final class Monitor: ObservableObject {
             } else {
                 actor = nil
             }
-            if let event = self.store.recordingStarted(pid: pid, at: timestamp, actor: actor) {
+            let rules = self.ignoredRulesSnapshot()
+            if let event = self.store.recordingStarted(
+                pid: pid, at: timestamp, actor: actor,
+                excluding: { event in rules.contains { $0.matches(event) } }) {
                 self.publish(event)
             }
         }
@@ -277,6 +292,41 @@ heartbeatTimer?.invalidate()
         refresh()
     }
 
+    func addIgnoredAppPermission(bundleIdentifier: String, kind: PrivacyKind) {
+        let identifier = bundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !identifier.isEmpty else { return }
+        updateIgnoredRules { rules in
+            let rule = AppPermissionIgnoreRule(bundleIdentifier: identifier, kind: kind)
+            return rules.contains(rule) ? rules : rules + [rule]
+        }
+    }
+
+    func removeIgnoredAppPermission(_ rule: AppPermissionIgnoreRule) {
+        updateIgnoredRules { $0.filter { $0 != rule } }
+    }
+
+    private func updateIgnoredRules(_ update: ([AppPermissionIgnoreRule]) -> [AppPermissionIgnoreRule]) {
+        ignoredRulesLock.lock()
+        let rules = update(ignoredRulesStorage)
+        ignoredRulesStorage = rules
+        ignoredRulesLock.unlock()
+
+        if let data = try? JSONEncoder().encode(rules) {
+            preferences.set(data, forKey: Self.ignoredRulesKey)
+        }
+        if Thread.isMainThread {
+            ignoredAppPermissions = rules
+        } else {
+            DispatchQueue.main.async { self.ignoredAppPermissions = rules }
+        }
+    }
+
+    private func ignoredRulesSnapshot() -> [AppPermissionIgnoreRule] {
+        ignoredRulesLock.lock()
+        defer { ignoredRulesLock.unlock() }
+        return ignoredRulesStorage
+    }
+
     /// 从事件页回到概览
     func backToOverview() {
         filter = DrillFilter()
@@ -286,7 +336,8 @@ heartbeatTimer?.invalidate()
 
     // MARK: 事件入口
 
-    private func handle(_ e: PrivacyEvent) {
+    func handle(_ e: PrivacyEvent) {
+        if ignoredRulesSnapshot().contains(where: { $0.matches(e) }) { return }
         let result = store.insert(e)
         if result.ignored { return }
         guard result.id != 0 else {

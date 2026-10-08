@@ -683,6 +683,17 @@ struct PrivacyEvent: Identifiable {
     }
 }
 
+struct AppPermissionIgnoreRule: Codable, Equatable, Identifiable {
+    var bundleIdentifier: String
+    var kind: PrivacyKind
+
+    var id: String { "\(bundleIdentifier)|\(kind.rawValue)" }
+
+    func matches(_ event: PrivacyEvent) -> Bool {
+        event.kind == kind && event.subject?.identifier == bundleIdentifier
+    }
+}
+
 // MARK: - 判定
 
 enum Judge {

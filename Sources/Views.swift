@@ -930,6 +930,24 @@ struct SettingsTab: View {
     @State private var showNotificationAlert = false
     @State private var notificationAlertMessage = ""
     @State private var notificationPermissionHint: String?
+    @State private var ignoreBundleIdentifier = ""
+    @State private var ignoreKind: PrivacyKind = .clipboard
+
+    private var recentIgnoreApps: [(identifier: String, name: String)] {
+        var seen = Set<String>()
+        return monitor.recent.compactMap { event in
+            guard let identifier = event.subject?.identifier,
+                  seen.insert(identifier).inserted else { return nil }
+            return (identifier, AppNames.shared.name(identifier))
+        }.prefix(12).map { $0 }
+    }
+
+    private var canAddIgnoreRule: Bool {
+        let identifier = ignoreBundleIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !identifier.isEmpty && !monitor.ignoredAppPermissions.contains {
+            $0.bundleIdentifier == identifier && $0.kind == ignoreKind
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -964,6 +982,78 @@ struct SettingsTab: View {
                         Text("正在等待系统授权…").font(.system(size: 11 * fontScale))
                     } else if let hint = notificationPermissionHint {
                         Text(hint).font(.system(size: 11 * fontScale)).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(.top, 4)
+            }
+
+            GroupBox("忽略规则") {
+                VStack(alignment: .leading, spacing: 9) {
+                    Text("忽略指定 App 后续产生的某类记录，不会删除已有记录。剪贴板来源按内容变化时的前台 App 推测。")
+                        .font(.system(size: 10.5 * fontScale))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    HStack(spacing: 6) {
+                        TextField("App Bundle ID", text: $ignoreBundleIdentifier)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 11 * fontScale, design: .monospaced))
+                        Menu {
+                            ForEach(recentIgnoreApps, id: \.identifier) { app in
+                                Button("\(app.name) (\(app.identifier))") {
+                                    ignoreBundleIdentifier = app.identifier
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "clock.arrow.circlepath")
+                        }
+                        .menuStyle(.borderlessButton)
+                        .help("从最近记录选择 App")
+                        .disabled(recentIgnoreApps.isEmpty)
+                    }
+
+                    Picker("权限或活动", selection: $ignoreKind) {
+                        ForEach(PrivacyKind.allCases, id: \.self) { kind in
+                            Text(kind.label).tag(kind)
+                        }
+                    }
+                    .font(.system(size: 11 * fontScale))
+
+                    HStack {
+                        Spacer()
+                        Button {
+                            monitor.addIgnoredAppPermission(
+                                bundleIdentifier: ignoreBundleIdentifier, kind: ignoreKind)
+                            ignoreBundleIdentifier = ""
+                        } label: {
+                            Label("添加规则", systemImage: "plus")
+                        }
+                        .disabled(!canAddIgnoreRule)
+                    }
+
+                    if monitor.ignoredAppPermissions.isEmpty {
+                        emptyHint("尚未设置忽略规则")
+                    } else {
+                        ForEach(monitor.ignoredAppPermissions) { rule in
+                            HStack(alignment: .center, spacing: 8) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("\(AppNames.shared.name(rule.bundleIdentifier)) · \(rule.kind.label)")
+                                        .font(.system(size: 11 * fontScale, weight: .medium))
+                                    Text(rule.bundleIdentifier)
+                                        .font(.system(size: 9 * fontScale, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1).truncationMode(.middle)
+                                }
+                                Spacer(minLength: 4)
+                                Button {
+                                    monitor.removeIgnoredAppPermission(rule)
+                                } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.plain)
+                                .help("删除忽略规则")
+                            }
+                        }
                     }
                 }
                 .padding(.top, 4)

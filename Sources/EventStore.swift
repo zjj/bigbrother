@@ -307,7 +307,8 @@ final class EventStore {
     }
 
     /// 录制开始不依赖授权结果;身份来自实时进程或邻近的 TCC 归因。
-    func recordingStarted(pid: Int, at timestamp: Date, actor: ProcInfo?) -> PrivacyEvent? {
+    func recordingStarted(pid: Int, at timestamp: Date, actor: ProcInfo?,
+                          excluding shouldIgnore: (PrivacyEvent) -> Bool = { _ in false }) -> PrivacyEvent? {
         onQueue {
             var duplicate = false
             query("""
@@ -341,6 +342,7 @@ final class EventStore {
                 severity: PrivacyKind.screenCapture.baseSeverity,
                 reason: "ScreenCaptureKit 报告录制开始",
                 isInherited: owner.map { $0.identifier != source.identifier } ?? false)
+            guard !shouldIgnore(event) else { return nil }
             let result = insert(event)
             guard result.id > 0 else { return nil }
             event.id = result.id

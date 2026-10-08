@@ -10,6 +10,7 @@ enum StorageTests {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         try testAppleFiltering(in: directory)
+        testIgnoreRules()
         try testPermissionEvents(in: directory)
         try testLegacyPermissionEvents(in: directory)
         try testEvidenceScopes(in: directory)
@@ -164,6 +165,37 @@ enum StorageTests {
         sqlite3_finalize(statement)
         precondition(reopened.insert(appleOnly[0]).ignored && reopened.totalCount() == 4)
         print("PASS: Apple-only events are not stored; third-party usage and old raw data remain")
+    }
+
+    private static func testIgnoreRules() {
+        let suiteName = "BigBrother-ignore-test-\(UUID().uuidString)"
+        let preferences = UserDefaults(suiteName: suiteName)!
+        defer { preferences.removePersistentDomain(forName: suiteName) }
+
+        let store = EventStore(path: ":memory:")
+        let monitor = Monitor(store: store, preferences: preferences)
+        let rule = AppPermissionIgnoreRule(bundleIdentifier: "com.microsoft.VSCode", kind: .clipboard)
+        monitor.addIgnoredAppPermission(bundleIdentifier: rule.bundleIdentifier, kind: rule.kind)
+
+        let clipboard = PrivacyEvent(
+            timestamp: Date(), service: "CLIPBOARD", kind: .clipboard,
+            accessing: ProcInfo(identifier: "com.microsoft.VSCode", pid: 100))
+        monitor.handle(clipboard)
+        precondition(store.totalCount() == 0, "Matching app and permission must be ignored before storage")
+
+        let microphone = PrivacyEvent(
+            timestamp: Date(), service: PrivacyKind.microphone.rawValue, kind: .microphone,
+            accessing: ProcInfo(identifier: "com.microsoft.VSCode", pid: 100),
+            authValue: 2, preflight: "no")
+        monitor.handle(microphone)
+        precondition(store.totalCount() == 1, "An app rule must not suppress other permission types")
+
+        let restored = Monitor(store: EventStore(path: ":memory:"), preferences: preferences)
+        precondition(restored.ignoredAppPermissions.contains(rule), "Ignore rules must persist in preferences")
+        monitor.removeIgnoredAppPermission(rule)
+        monitor.handle(clipboard)
+        precondition(store.totalCount() == 2, "Removing a rule must allow later matching events")
+        print("PASS: app+permission ignore rules filter before storage, persist and can be removed")
     }
 
     private static func parsedEvent(kind: PrivacyKind = .fullDisk, preflight: String? = "yes",
@@ -863,6 +895,14 @@ enum StorageTests {
                      "Independent recording evidence must not be gated by an earlier denial")
         precondition(checkStore.recentEvents(scope: .all).count == 2)
         precondition(checkStore.todayTotal() == 1, "纯检查不计入使用统计")
+
+        let ignoredRecordingStore = EventStore(path: ":memory:")
+        let ignoredRecording = ignoredRecordingStore.recordingStarted(
+            pid: 500, at: now, actor: ProcInfo(identifier: "com.microsoft.VSCode", pid: 500),
+            excluding: { AppPermissionIgnoreRule(bundleIdentifier: "com.microsoft.VSCode",
+                                                   kind: .screenCapture).matches($0) })
+        precondition(ignoredRecording == nil && ignoredRecordingStore.totalCount() == 0,
+                     "Ignore rules must also filter synthesized recording events before storage")
 
         let reordered = TCCParser()
         var events: [PrivacyEvent] = []
