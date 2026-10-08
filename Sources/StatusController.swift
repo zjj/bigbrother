@@ -5,6 +5,7 @@ import UserNotifications
 
 enum PanelLayout {
     static let width: CGFloat = 460
+    static let minimumContentHeight: CGFloat = 360
     static let topGap: CGFloat = 16
     static let bottomMargin: CGFloat = 12
 
@@ -13,8 +14,9 @@ enum PanelLayout {
         let top = min(anchor.minY - topGap, visibleFrame.maxY)
         let maximumHeight = max(0, min(visibleFrame.height * 0.75,
                                       top - visibleFrame.minY - bottomMargin))
+        let requestedHeight = contentHeight.map { max(minimumContentHeight, $0) } ?? maximumHeight
         let size = NSSize(width: min(width, visibleFrame.width),
-                          height: min(maximumHeight, max(0, contentHeight ?? maximumHeight)))
+                          height: min(maximumHeight, requestedHeight))
         let x = min(max(anchor.midX - size.width / 2, visibleFrame.minX),
                     visibleFrame.maxX - size.width)
         return NSRect(x: x, y: top - size.height, width: size.width, height: size.height)

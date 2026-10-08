@@ -17,6 +17,9 @@ enum PanelLayoutTests {
         let fitted = PanelLayout.frame(below: anchor, in: desktop, contentHeight: 420)
         precondition(fitted.height == 420, "Panel must fit the overview without extra empty space")
         precondition(fitted.maxY == anchor.minY - 16)
+        let shortContent = PanelLayout.frame(below: anchor, in: desktop, contentHeight: 180)
+        precondition(shortContent.height == PanelLayout.minimumContentHeight,
+                     "Panel must preserve a useful minimum height when the overview is empty")
         let lowAnchor = NSRect(x: 1200, y: 300, width: 24, height: 25)
         let constrained = PanelLayout.frame(below: lowAnchor, in: desktop, contentHeight: 900)
         precondition(constrained.minY == desktop.minY + 12)
@@ -42,7 +45,8 @@ enum PanelLayoutTests {
                 precondition(frame.minY >= desktop.minY + 12)
                 for height: CGFloat in [240, 520, 760, 2400] {
                     let fitted = PanelLayout.frame(below: anchor, in: desktop, contentHeight: height)
-                    precondition(fitted.height == min(height, desktop.height * 0.75))
+                    precondition(fitted.height == min(max(height, PanelLayout.minimumContentHeight),
+                                                       desktop.height * 0.75))
                     precondition(desktop.contains(fitted))
                 }
             }

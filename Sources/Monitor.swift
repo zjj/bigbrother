@@ -367,12 +367,34 @@ heartbeatTimer?.invalidate()
                 self.totalCount  = tot
                 self.highSeverity = hs
                 self.deniedCount = dn
-                self.recent      = rec
+                if self.filter == f { self.recent = rec }
                 self.topActors   = top.map { (name: $0.0, n: $0.1) }
                 self.histogram   = hist
                 self.histogramEnd = histEnd
                 self.inheritance = inh
                 self.threatLevel = thr
+            }
+        }
+    }
+
+    /// 筛选变化时只刷新记录列表，避免为一次交互重算所有概览统计。
+    func refreshRecent() {
+        let store = self.store
+        let f = filter
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let rec = store.recentEvents(limit: Self.listLimit,
+                                         minSeverity: f.onlyHighRisk ? 4 : 0,
+                                         onlyDenied: f.onlyDenied,
+                                         kinds: f.kinds.isEmpty ? nil : f.kinds,
+                                         actor: f.actor,
+                                         search: f.search,
+                                         since: f.since,
+                                         subject: f.subject,
+                                         scope: f.scope)
+            DispatchQueue.main.async {
+                guard self.filter == f else { return }
+                self.recent = rec
             }
         }
     }
