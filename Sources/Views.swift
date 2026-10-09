@@ -115,23 +115,20 @@ struct PanelView: View {
         .onExitCommand { monitor.requestClose?() }
     }
 
-    /// 头部那句状态。之前写的是「眼睛:红色」—— 那只是在复述用户已经看到的颜色,
-    /// 等于没说。这里说的是**正在发生什么**。
     static func statusText(level: Double) -> String {
         switch level {
-        case ..<2.5: return "目前没有需要留意的记录"
-        case ..<3.5: return "最近有请求或活动记录"
-        case ..<4.5: return "最近有需要留意的记录"
-        default:     return "最近有高风险请求或活动"
+        case ..<2.5: return "监测中"
+        case ..<3.5: return "近期有请求或活动"
+        case ..<4.5: return "近期有需留意的记录"
+        default:     return "近期有高风险记录"
         }
     }
 
     private var header: some View {
         HStack(spacing: 10) {
             Image(systemName: monitor.isCapturing ? "eye" : "eye.slash")
-                .font(.system(size: 21, weight: .semibold))
-                .foregroundStyle(eyeColor(level: monitor.threatLevel,
-                                          capturing: monitor.isCapturing))
+                .font(.system(size: 18, weight: .regular))
+                .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 2) {
                 Text("BigBrother").font(.system(size: 15 * fontScale, weight: .semibold))
                 HStack(spacing: 5) {
@@ -141,7 +138,7 @@ struct PanelView: View {
                         .frame(width: 6, height: 6)
                     Text(monitor.isCapturing
                          ? Self.statusText(level: Double(monitor.threatLevel))
-                         : "BigBrother is watching you")
+                         : monitor.hasStarted ? "监测已暂停" : "正在启动…")
                         .font(.system(size: 11 * fontScale))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -171,9 +168,8 @@ struct OverviewTab: View {
     @ObservedObject var monitor: Monitor
     @ScaledMetric(relativeTo: .body) private var fontScale = 1.0
 
-    private let cols = [GridItem(.flexible(), spacing: 8),
-                        GridItem(.flexible(), spacing: 8),
-                        GridItem(.flexible(), spacing: 8)]
+    private let cols = [GridItem(.flexible(), spacing: 16),
+                        GridItem(.flexible(), spacing: 16)]
 
     private var hasTodayRecords: Bool {
         !monitor.todaySubjects.isEmpty || !monitor.todayCounts.isEmpty
@@ -182,17 +178,15 @@ struct OverviewTab: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
 
-            // ── 一句话说清今天发生了什么 ──
-            // 不要操作说明。「点击任意条目下钻」这类提示本身就说明界面不合格。
             summary
 
             if !hasTodayRecords {
                 Spacer(minLength: 0)
             }
 
-            // ── 主角:今天谁访问过 ──
             if !monitor.todaySubjects.isEmpty {
-                sectionTitle("今天有相关记录的 App")
+                Divider()
+                sectionTitle("今日 App")
                 ForEach(Array(monitor.todaySubjects.enumerated()), id: \.offset) { _, subj in
                     SubjectRow(identifier: subj.identifier, count: subj.n, worst: subj.worst) {
                         monitor.drillIntoSubject(subj.identifier)
@@ -200,9 +194,9 @@ struct OverviewTab: View {
                 }
             }
 
-            // ── 第二层:权限维度 ──
             if !monitor.todayCounts.isEmpty {
-                sectionTitle("今天都用到了哪些权限")
+                Divider()
+                sectionTitle("权限")
                 LazyVGrid(columns: cols, spacing: 8) {
                     ForEach(PrivacyKind.allCases.filter(\.isCore), id: \.self) { k in
                         KindChip(kind: k, count: count(k)) { monitor.drillInto(kind: k) }
@@ -219,7 +213,8 @@ struct OverviewTab: View {
                 }
             }
 
-            sectionTitle("最近 24 小时的相关记录")
+            Divider()
+            sectionTitle("近 24 小时")
             Sparkline(values: monitor.histogram, endingAt: monitor.histogramEnd)
         }
         .frame(maxWidth: .infinity,
@@ -227,25 +222,23 @@ struct OverviewTab: View {
                alignment: .topLeading)
     }
 
-    /// 一句话摘要。这是用户打开应用后读到的第一句话。
     @ViewBuilder
     private var summary: some View {
         let n = monitor.todaySubjects.count
-        VStack(alignment: .leading, spacing: 3) {
-            Text(!monitor.isCapturing
-                 ? "BigBrother is watching you"
-                 : n == 0
-                    ? "今天还没有记录到权限访问"
-                    : "今天有 \(n) 个非系统App访问了受保护的权限")
-                .font(.system(size: 16 * fontScale, weight: .semibold))
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text("今日").font(.system(size: 13 * fontScale, weight: .semibold))
+                Spacer()
+                Text("\(n) 个 App · \(monitor.todayTotal) 条访问记录")
+                    .font(.system(size: 12 * fontScale))
+                    .monospacedDigit()
+            }
             Text(!monitor.isCapturing
                  ? (monitor.hasStarted
-                    ? "记录暂时中断，今天的数据可能不完整。"
-                    : "正在初始化监测，稍后显示访问记录。")
-                 : monitor.todaySubjects.isEmpty
-                    ? "这里只显示系统提供的记录；没有记录，不一定代表没有访问。"
-                    : "已授权的访问同样会被记录；观察不到采集内容，也不代表没有访问。")
-                .font(.system(size: 12 * fontScale))
+                    ? "监测已暂停，记录可能不完整。"
+                    : "正在启动监测。")
+                 : "基于系统日志；没有记录不代表没有访问。")
+                .font(.system(size: 11 * fontScale))
                 .foregroundStyle(.secondary)
         }
         .padding(.top, 2)
@@ -295,7 +288,8 @@ private struct SubjectRow: View {
                     Circle().fill(Color.orange).frame(width: 6, height: 6)
                 }
                 Text("\(count) 条")
-                    .font(.system(size: 11, design: .rounded))
+                    .font(.system(size: 11))
+                    .monospacedDigit()
                     .foregroundStyle(.secondary)
                 Image(systemName: "chevron.right")
                     .font(.system(size: 8)).foregroundStyle(.tertiary)
@@ -403,22 +397,25 @@ struct KindChip: View {
 
     var body: some View {
         Button { action?() } label: {
-            VStack(spacing: 3) {
+            HStack(spacing: 7) {
                 Image(systemName: kind.symbol)
-                    .font(.system(size: 14))
-                    .foregroundStyle(count > 0 ? severityColor(kind.baseSeverity) : .secondary)
-                Text("\(count)").font(.system(size: 15, weight: .bold, design: .rounded))
-                Text(kind.label)
-                    .font(.system(size: 8.5))
+                    .font(.system(size: 12))
                     .foregroundStyle(.secondary)
-                    .lineLimit(1).minimumScaleFactor(0.65)
+                    .frame(width: 16)
+                Text(kind.label)
+                    .font(.system(size: 12))
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Text("\(count)")
+                    .font(.system(size: 12))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 7)
-            .background(RoundedRectangle(cornerRadius: 7)
-                .fill(Color.primary.opacity(hovering ? 0.12 : 0.06)))
-            .overlay(RoundedRectangle(cornerRadius: 7)
-                .stroke(Color.accentColor.opacity(hovering ? 0.5 : 0), lineWidth: 1))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 4)
+                .fill(Color.primary.opacity(hovering ? 0.06 : 0)))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
@@ -501,7 +498,7 @@ struct EventsTab: View {
 
                     Text("›").font(.system(size: 10)).foregroundStyle(.tertiary)
 
-                    Text("已筛选").font(.system(size: 10, weight: .medium))
+                    Text("筛选").font(.system(size: 11, weight: .medium))
                     Spacer()
                     Button("清除") { monitor.clearFilter() }
                         .buttonStyle(.plain)
@@ -519,9 +516,10 @@ struct EventsTab: View {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 11 * fontScale)).foregroundStyle(.secondary)
-                TextField("搜索 App 名称或访问内容", text: $monitor.filter.search)
+                TextField("搜索记录", text: $monitor.filter.search)
                     .textFieldStyle(.plain)
                     .font(.system(size: 12 * fontScale))
+                    .help("搜索 App 标识符或记录内容")
                 if !monitor.filter.search.isEmpty {
                     Button { monitor.filter.search = "" } label: {
                         Image(systemName: "xmark.circle.fill").font(.system(size: 10))
@@ -532,23 +530,16 @@ struct EventsTab: View {
             .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.06)))
 
             VStack(alignment: .leading, spacing: 7) {
-                Picker("记录类别", selection: $monitor.filter.scope) {
-                    ForEach(EventScope.allCases, id: \.self) { scope in
-                        Text(scope.rawValue).tag(scope)
-                    }
-                }
-                .font(.system(size: 12 * fontScale))
-                Text("默认只显示系统能确认的访问。已授权的 App 每次访问都会记录在这里；「仅权限查询」里的记录没有拿到授权，「被拒或未知」里的记录结果不明确 —— 这两类都不算访问。")
-                    .font(.system(size: 10 * fontScale))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
                 HStack(spacing: 12) {
+                    Picker("类别", selection: $monitor.filter.scope) {
+                        ForEach(EventScope.allCases, id: \.self) { scope in
+                            Text(scope.rawValue).tag(scope)
+                        }
+                    }
+                    .font(.system(size: 12 * fontScale))
                     Toggle(isOn: $monitor.filter.onlyHighRisk) {
-                        Text("只看需要留意的").font(.system(size: 12 * fontScale))
+                        Text("仅需留意").font(.system(size: 12 * fontScale))
                     }.toggleStyle(.checkbox)
-
-                    Spacer(minLength: 0)
                 }
 
                 HStack(spacing: 8) {
@@ -589,14 +580,21 @@ struct EventsTab: View {
                          : "\(monitor.recent.count) 条")
                         .font(.system(size: 11 * fontScale)).foregroundStyle(.secondary)
                 }
+                DisclosureGroup("记录说明") {
+                    Text("访问记录包括已授权访问与系统确认的活动；未获授权的权限查询、被拒或未知结果不计为访问。授权不代表实际读取了内容。")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .font(.system(size: 11 * fontScale))
             }
 
+            Divider()
             if monitor.recent.isEmpty && monitor.isLoadingRecent {
                 ProgressView("正在加载记录…")
             } else if monitor.recent.isEmpty {
                 emptyHint(monitor.filter.onlyHighRisk
-                          ? "没有找到需要留意的访问记录。"
-                          : "没有找到符合条件的访问记录。")
+                          ? "暂无需留意的记录"
+                          : "暂无符合条件的记录")
             } else {
                 ForEach(monitor.recent) { e in
                     EventRow(event: e)
@@ -612,7 +610,7 @@ struct EventsTab: View {
                         Spacer()
                     }
                 } else {
-                    Text("已显示全部符合条件的记录")
+                    Text("已加载全部记录")
                         .font(.system(size: 11 * fontScale))
                         .foregroundStyle(.secondary)
                 }
@@ -632,9 +630,9 @@ struct FlowChips: View {
             ForEach(Array(items.enumerated()), id: \.offset) { _, item in
                 HStack(spacing: 5) {
                     Text(item.label)
-                        .font(.system(size: 9.5))
+                        .font(.system(size: 11))
                         .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.primary.opacity(0.05)))
                     Button {
                         onClear(item.clear)
                     } label: {
@@ -657,10 +655,13 @@ struct EventRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            Circle()
-                .fill(event.affectsThreatLevel ? severityColor(event.severity) : Color.secondary)
-                .frame(width: 7, height: 7)
-                .padding(.top, 4)
+            if event.affectsThreatLevel && event.severity >= 4 {
+                Circle()
+                    .fill(severityColor(event.severity))
+                    .frame(width: 6, height: 6)
+                    .padding(.top, 5)
+                    .accessibilityLabel("需留意")
+            }
 
             // 真实 App 图标 —— 一行 SF Symbol 是所有行看起来都一样的根源
             subjectIcon
@@ -671,8 +672,6 @@ struct EventRow: View {
                     Text(subjectName)
                         .font(.system(size: 13 * fontScale, weight: .semibold))
                         .lineLimit(1).truncationMode(.middle)
-                    tag(event.phase.rawValue)
-                    tag(event.resultLabel, warn: event.isDenied && event.phase != .permissionCheck)
                     Spacer()
                     Text(Self.timeFmt.string(from: event.timestamp))
                         .font(.system(size: 10.5 * fontScale, design: .monospaced))
@@ -682,15 +681,22 @@ struct EventRow: View {
                 // ── 第二行:它对我做了什么(说人话)──
                 Text(event.actionPhrase)
                     .font(.system(size: 12 * fontScale))
-                    .foregroundStyle(.primary.opacity(0.85))
+                    .foregroundStyle(.primary)
+
+                Text(event.phase.rawValue == event.resultLabel
+                     ? event.resultLabel
+                     : "\(event.phase.rawValue) · \(event.resultLabel)")
+                    .font(.system(size: 11 * fontScale))
+                    .foregroundStyle(event.isDenied && event.phase != .permissionCheck
+                                     ? Color.orange : .secondary)
 
                 // ── 第三行:只有值得说的细节才出现 ──
                 if !details.isEmpty || distinctExecutorName != nil {
                     VStack(alignment: .leading, spacing: 3) {
                         if let executorName = distinctExecutorName {
-                            Text("关联 App：\(subjectName) → 执行程序：\(executorName)")
-                            .font(.system(size: 11 * fontScale, weight: .medium))
-                            .foregroundStyle(.primary)
+                            Text("执行程序：\(executorName)")
+                            .font(.system(size: 11 * fontScale))
+                            .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                         }
                         if !details.isEmpty {
@@ -712,7 +718,7 @@ struct EventRow: View {
                 }
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
         .contentShape(Rectangle())
         .onTapGesture(perform: toggleEvidenceNote)
         .accessibilityElement(children: .combine)
@@ -769,8 +775,7 @@ struct EventRow: View {
         // 否则就是在替 App 下结论。
         if let confidence = event.accessConfidenceLabel,
            confidence != event.resultLabel {
-            out.append(Detail(text: confidence,
-                              warn: event.isConfirmedAccess))
+            out.append(Detail(text: confidence))
         }
 
         // 完整录制 / 持续时长
@@ -791,14 +796,6 @@ struct EventRow: View {
         return out
     }
 
-    private func tag(_ s: String, warn: Bool = false) -> some View {
-        Text(s)
-            .font(.system(size: 8.5))
-            .padding(.horizontal, 5).padding(.vertical, 1)
-            .background(RoundedRectangle(cornerRadius: 3)
-                .fill(warn ? Color.orange.opacity(0.18) : Color.primary.opacity(0.07)))
-    }
-
     static let timeFmt: DateFormatter = {
         let f = DateFormatter(); f.dateFormat = "MM-dd HH:mm:ss"; return f
     }()
@@ -814,12 +811,12 @@ struct StatsTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            sectionTitle("关联的 App 与执行程序")
-            Text("系统可能将一个程序的权限请求关联到另一个 App。这不代表请求获准或已读取内容。")
-                .font(.system(size: 9)).foregroundStyle(.secondary)
+            sectionTitle("App 与执行程序")
+            Text("权限归属不代表请求获准或已读取内容。")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
 
             if monitor.inheritance.isEmpty {
-                emptyHint("目前没有发现这类访问记录。")
+                emptyHint("暂无记录")
             } else {
                 ForEach(Array(monitor.inheritance.enumerated()), id: \.offset) { _, row in
                     VStack(alignment: .leading, spacing: 2) {
@@ -828,29 +825,31 @@ struct StatsTab: View {
                             .lineLimit(1).truncationMode(.middle)
                         HStack(spacing: 4) {
                             Image(systemName: "arrow.turn.down.right")
-                                .font(.system(size: 8)).foregroundStyle(.orange)
-                            Text("实际操作：\(row.actor)")
+                                .font(.system(size: 8)).foregroundStyle(.secondary)
+                            Text("执行程序：\(row.actor)")
                                 .font(.system(size: 10))
                                 .lineLimit(1).truncationMode(.middle)
                             Spacer()
-                            Text("\(row.n)").font(.system(size: 10, design: .rounded))
+                            Text("\(row.n)").font(.system(size: 11))
+                                .monospacedDigit()
                                 .foregroundStyle(.secondary)
                         }
                     }
                     .padding(.vertical, 3).padding(.horizontal, 7)
-                    .background(RoundedRectangle(cornerRadius: 5).fill(Color.orange.opacity(0.07)))
+                    Divider()
                 }
             }
 
-            sectionTitle("保存访问记录")
-            Picker("导出证据", selection: $exportScope) {
+            Divider()
+            sectionTitle("导出")
+            Picker("记录类别", selection: $exportScope) {
                 ForEach(EventScope.allCases, id: \.self) { scope in
                     Text(scope.rawValue).tag(scope)
                 }
             }
             .disabled(exporting)
             HStack(spacing: 8) {
-                Button("保存近 7 天记录为表格") { export() }
+                Button("导出近 7 天记录…") { export() }
                     .font(.system(size: 11))
                     .disabled(exporting)
                 if let m = exportMsg {
@@ -909,32 +908,18 @@ struct SettingsTab: View {
         Bundle.main.object(forInfoDictionaryKey: "BigBrotherCommit") as? String ?? "未知"
     }
 
-    // MARK: 关于
-
-    /// 产品宣言。
-    ///
-    /// 这一页要回答用户唯一的疑问:**这东西本身安全吗,它到底在卖什么?**
-    /// 对一个「安心工具」来说,这比任何功能都重要 —— 用户不会相信一个
-    /// 说不清自己立场的隐私工具。
-    ///
-    /// 三条硬规则:
-    ///   · 不出现任何技术术语
-    ///   · 不卖「防范」。系统已经在拦了,宣称帮你挡是低端话术,也不诚实
-    ///   · 说清它不做什么,和说清它做什么一样重要
     private var aboutPage: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 9) {
                 Image(systemName: "eye").font(.system(size: 22, weight: .medium))
                 VStack(alignment: .leading, spacing: 1) {
                     Text("BigBrother").font(.system(size: 15, weight: .semibold))
-                    Text("版本 \(version) · 代码公开").font(.system(size: 10))
+                    Text("版本 \(version)").font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
             }
 
-            statement(title: "源码", body: """
-                https://github.com/zjj/bigbrother
-                """)
+            Link("GitHub 源码", destination: URL(string: "https://github.com/zjj/bigbrother")!)
             statement(title: "记录范围", body: """
                 已授权的 App 也会记录，但仅限系统提供的证据。摄像头、麦克风和个人数据主要依赖权限调用日志；录屏活动仅覆盖可归因的系统录制日志。不能保证捕获每次截图、剪贴板读取或设备启停。没有记录不代表没有访问。
                 """)
@@ -980,16 +965,9 @@ struct SettingsTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            GroupBox("图标与提醒") {
+            GroupBox("监测与通知") {
                 VStack(alignment: .leading, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        legend(.red, "高风险", "命令行程序访问了敏感权限")
-                        legend(.orange, "需留意", "较高风险的权限访问")
-                        legend(.yellow, "请关注", "屏幕画面等高敏感权限的访问")
-                        legend(.blue, "一般", "其余权限的访问")
-                    }
-
-                    Picker("图标颜色多久恢复", selection: Binding(
+                    Picker("状态颜色保留", selection: Binding(
                         get: { Int(monitor.threatWindow) },
                         set: { monitor.threatWindow = Double($0) })) {
                         Text("30 秒").tag(30)
@@ -1002,7 +980,7 @@ struct SettingsTab: View {
                     Toggle(isOn: Binding(
                         get: { monitor.notifyOnAlert },
                         set: setNotificationEnabled)) {
-                        Text("高风险时发送通知（默认关闭）").font(.system(size: 12 * fontScale))
+                        Text("高风险通知").font(.system(size: 12 * fontScale))
                     }
                     .toggleStyle(.checkbox)
                     .disabled(requestingNotificationPermission)
@@ -1012,13 +990,24 @@ struct SettingsTab: View {
                     } else if let hint = notificationPermissionHint {
                         Text(hint).font(.system(size: 11 * fontScale)).foregroundStyle(.secondary)
                     }
+                    DisclosureGroup("图标颜色说明") {
+                        VStack(alignment: .leading, spacing: 5) {
+                            legend(.red, "高风险", "命令行程序访问敏感权限")
+                            legend(.orange, "需留意", "较高风险的权限访问")
+                            legend(.yellow, "请关注", "屏幕画面等敏感权限的访问")
+                            legend(.blue, "一般", "其他权限访问")
+                        }
+                        .padding(.top, 4)
+                    }
+                    .font(.system(size: 11 * fontScale))
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 4)
             }
 
             GroupBox("忽略规则") {
                 VStack(alignment: .leading, spacing: 9) {
-                    Text("忽略指定 App 后续产生的某类记录，不会删除已有记录。剪贴板来源按内容变化时的前台 App 推测。")
+                    Text("仅忽略后续记录，已有记录不受影响。")
                         .font(.system(size: 10.5 * fontScale))
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1047,6 +1036,11 @@ struct SettingsTab: View {
                         }
                     }
                     .font(.system(size: 11 * fontScale))
+                    if ignoreKind == .clipboard {
+                        Text("剪贴板来源按内容变化时的前台 App 推测。")
+                            .font(.system(size: 11 * fontScale))
+                            .foregroundStyle(.secondary)
+                    }
 
                     HStack {
                         Spacer()
@@ -1085,6 +1079,7 @@ struct SettingsTab: View {
                         }
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 4)
             }
 
@@ -1102,12 +1097,6 @@ struct SettingsTab: View {
                     if let error = loginItemError {
                         Text(error).font(.system(size: 11 * fontScale)).foregroundStyle(.red)
                     }
-                    Text(launchAtLogin
-                         ? "已设置为登录时启动。"
-                         : "关闭后，BigBrother 不会在你登录 Mac 时自动打开。")
-                        .font(.system(size: 11 * fontScale)).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-
                     Picker("保留记录", selection: Binding(
                         get: { monitor.retentionDays },
                         set: { monitor.retentionDays = $0 })) {
@@ -1128,10 +1117,11 @@ struct SettingsTab: View {
                         Button("在访达中显示") {
                             NSWorkspace.shared.selectFile(monitor.store.path, inFileViewerRootedAtPath: "")
                         }.font(.system(size: 12 * fontScale))
-                        Button("清空全部数据") { confirmClearData() }
+                        Button("清空记录…") { confirmClearData() }
                             .font(.system(size: 12 * fontScale))
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 4)
             }
 

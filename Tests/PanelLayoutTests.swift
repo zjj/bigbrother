@@ -52,6 +52,10 @@ enum PanelLayoutTests {
             }
         }
         testOverviewMeasurement()
+        precondition(PanelView.statusText(level: 0) == "监测中")
+        precondition(PanelView.statusText(level: 3) == "近期有请求或活动")
+        precondition(PanelView.statusText(level: 4) == "近期有需留意的记录")
+        precondition(PanelView.statusText(level: 5) == "近期有高风险记录")
         testDialogFocusHandoff()
         testStatusButtonToggle()
         for offset in [8 * 3600, 19800] {
@@ -218,6 +222,15 @@ enum PanelLayoutTests {
                  "Each selected tab must report its own content height")
         precondition(measuredHeight < fullHeight,
                  "A short events page must not inherit the empty overview's whitespace")
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            window.appearance = NSAppearance(named: appearance)
+            for tab in [PanelTab.stats, .settings] {
+                monitor.tab = tab
+                layout()
+                precondition(measuredTab == tab && measuredHeight.isFinite && measuredHeight > 100,
+                             "Native controls must report a usable content size in both appearances")
+            }
+        }
         window.close()
         print("PASS: spacious empty overview, page-specific sizing and tab switching")
     }
