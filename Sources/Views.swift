@@ -513,7 +513,6 @@ struct EventsTab: View {
                     var f = monitor.filter
                     clear(&f)
                     monitor.filter = f
-                    monitor.refresh()
                 }
             }
 
@@ -539,9 +538,6 @@ struct EventsTab: View {
                     }
                 }
                 .font(.system(size: 12 * fontScale))
-                .onChange(of: monitor.filter.scope) { _ in
-                    monitor.refreshRecent()
-                }
                 Text("默认只显示系统能确认的访问。已授权的 App 每次访问都会记录在这里；「仅权限查询」里的记录没有拿到授权，「被拒或未知」里的记录结果不明确 —— 这两类都不算访问。")
                     .font(.system(size: 10 * fontScale))
                     .foregroundStyle(.secondary)
@@ -588,17 +584,16 @@ struct EventsTab: View {
                     }
 
                     Spacer()
-                    // 列表有上限(400)。若正好顶到上限,说明还有更多没显示,
-                    // 这时说「最近 N 条」才是诚实的 —— 否则用户会以为这就是全部,
-                    // 尤其在下钻自「被拒尝试 120098」这种大数字时。
-                    Text(monitor.recent.count >= Monitor.listLimit
-                         ? "最近 \(monitor.recent.count) 条"
+                    Text(monitor.hasMoreRecent
+                         ? "已加载 \(monitor.recent.count) 条"
                          : "\(monitor.recent.count) 条")
                         .font(.system(size: 11 * fontScale)).foregroundStyle(.secondary)
                 }
             }
 
-            if monitor.recent.isEmpty {
+            if monitor.recent.isEmpty && monitor.isLoadingRecent {
+                ProgressView("正在加载记录…")
+            } else if monitor.recent.isEmpty {
                 emptyHint(monitor.filter.onlyHighRisk
                           ? "没有找到需要留意的访问记录。"
                           : "没有找到符合条件的访问记录。")
@@ -606,6 +601,20 @@ struct EventsTab: View {
                 ForEach(monitor.recent) { e in
                     EventRow(event: e)
                     Divider().opacity(0.4)
+                }
+                if monitor.hasMoreRecent {
+                    HStack {
+                        Spacer()
+                        Button(monitor.isLoadingRecent ? "正在加载…" : "加载更多") {
+                            monitor.loadMoreRecent()
+                        }
+                        .disabled(monitor.isLoadingRecent)
+                        Spacer()
+                    }
+                } else {
+                    Text("已显示全部符合条件的记录")
+                        .font(.system(size: 11 * fontScale))
+                        .foregroundStyle(.secondary)
                 }
             }
         }

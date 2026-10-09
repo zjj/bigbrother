@@ -18,6 +18,7 @@ enum StorageTests {
         testCameraInUseChannel()
         try testLogStreamEOF(in: directory)
         testRecordingActivity()
+        testRecordPagination()
 
         let database = directory.appendingPathComponent("records/events.db")
         let output = directory.appendingPathComponent("records.csv")
@@ -94,6 +95,100 @@ enum StorageTests {
             precondition(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("invalid.csv").path))
         }
         print("PASS: denied storage is visible and does not claim successful writes or exports")
+    }
+
+    private static func testRecordPagination() {
+        let store = EventStore(path: ":memory:")
+        let timestamp = Date()
+        for index in 0..<453 {
+            let event = PrivacyEvent(
+                timestamp: timestamp, service: PrivacyKind.microphone.rawValue, kind: .microphone,
+                accessing: ProcInfo(identifier: "page.app.\(index)", pid: 1000 + index),
+                authValue: 2, preflight: "no")
+            precondition(store.insert(event).id > 0)
+        }
+        guard let first = store.recentEventPage(limit: 50), let cursor = first.last else {
+            preconditionFailure("First page must load")
+        }
+        precondition(first.count == 50)
+        precondition(first.first?.id == 453 && cursor.id == 404,
+                     "Equal timestamps must be ordered by descending ID")
+        let newest = PrivacyEvent(
+            timestamp: timestamp.addingTimeInterval(1), service: PrivacyKind.microphone.rawValue,
+            kind: .microphone, accessing: ProcInfo(identifier: "page.new", pid: 2000),
+            authValue: 2, preflight: "no")
+        precondition(store.insert(newest).id > 0)
+        var ids = first.map(\.id)
+        var before = cursor
+        while let page = store.recentEventPage(limit: 50, before: before), !page.isEmpty {
+            ids += page.map(\.id)
+            before = page.last!
+        }
+        precondition(ids == Array((Int64(1)...453).reversed()),
+                     "Cursor paging must not duplicate or skip rows when new events arrive")
+        precondition(store.recentEventPage(limit: 50, actor: "page.app.1")?.count == 1)
+        precondition(store.recentEventPage(limit: 50, kinds: [.camera])?.isEmpty == true)
+
+        let monitor = Monitor(store: store)
+        func waitForPage() {
+            let deadline = Date().addingTimeInterval(5)
+            while monitor.isLoadingRecent && Date() < deadline {
+                RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            }
+            precondition(!monitor.isLoadingRecent, "Loading must finish")
+            precondition(monitor.storageError == nil)
+        }
+        monitor.refreshRecent()
+        waitForPage()
+        precondition(monitor.recent.count == 50 && monitor.hasMoreRecent)
+        monitor.loadMoreRecent()
+        monitor.loadMoreRecent()
+        waitForPage()
+        precondition(monitor.recent.count == 100, "Repeated clicks must not load duplicate pages")
+        monitor.refresh()
+        waitForPage()
+        precondition(monitor.recent.count == 100, "Automatic refresh must keep the loaded count")
+
+        monitor.loadMoreRecent()
+        monitor.filter.actor = "page.app.1"
+        waitForPage()
+        precondition(monitor.recent.count == 1 && !monitor.hasMoreRecent,
+                     "A filter change must discard in-flight pages from the old filter")
+        monitor.filter.actor = nil
+        waitForPage()
+        precondition(monitor.recent.count == 50 && monitor.hasMoreRecent)
+        monitor.filter.search = "no.match"
+        waitForPage()
+        precondition(monitor.recent.isEmpty && !monitor.hasMoreRecent)
+        monitor.clearFilter()
+        waitForPage()
+        while monitor.hasMoreRecent {
+            monitor.loadMoreRecent()
+            waitForPage()
+        }
+        precondition(monitor.recent.count == 454,
+                     "Load more must reach records beyond the previous 400-row cap")
+        precondition(Set(monitor.recent.map(\.id)).count == 454)
+        monitor.refreshRecent()
+        waitForPage()
+        precondition(monitor.recent.count == 454 && !monitor.hasMoreRecent)
+
+        let exactStore = EventStore(path: ":memory:")
+        for index in 0..<50 {
+            var event = newest
+            event.accessing = ProcInfo(identifier: "exact.app.\(index)", pid: 3000 + index)
+            precondition(exactStore.insert(event).id > 0)
+        }
+        let exactMonitor = Monitor(store: exactStore)
+        exactMonitor.refreshRecent()
+        let deadline = Date().addingTimeInterval(5)
+        while exactMonitor.isLoadingRecent && Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        precondition(!exactMonitor.isLoadingRecent && exactMonitor.recent.count == 50)
+        precondition(!exactMonitor.hasMoreRecent,
+                     "Exactly one full page must not show a spurious load-more button")
+        print("PASS: cursor pagination, filter resets, refresh, repeated clicks and final-page detection")
     }
 
     private static func testAppleFiltering(in directory: URL) throws {

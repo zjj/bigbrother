@@ -698,6 +698,17 @@ final class EventStore {
                       since: Date? = nil,
                       subject: String? = nil,
                       scope: EventScope = .usage) -> [PrivacyEvent] {
+        recentEventPage(limit: limit, minSeverity: minSeverity, onlyDenied: onlyDenied,
+                        kinds: kinds, actor: actor, search: search, since: since,
+                        subject: subject, scope: scope) ?? []
+    }
+
+    func recentEventPage(limit: Int, before: PrivacyEvent? = nil,
+                         minSeverity: Int = 0, onlyDenied: Bool = false,
+                         kinds: Set<PrivacyKind>? = nil, actor: String? = nil,
+                         search: String = "", since: Date? = nil,
+                         subject: String? = nil,
+                         scope: EventScope = .usage) -> [PrivacyEvent]? {
         var sql = """
               SELECT \(Self.eventColumns)
               FROM events WHERE severity >= ?
@@ -731,17 +742,21 @@ final class EventStore {
             let pat = "%\(search)%"
             binds += [.text(pat), .text(pat), .text(pat)]
         }
-        sql += " ORDER BY ts_epoch DESC LIMIT ?"
+        if let before {
+            sql += " AND (ts_epoch, id) < (?, ?)"
+            binds += [.double(before.timestamp.timeIntervalSince1970), .int(before.id)]
+        }
+        sql += " ORDER BY ts_epoch DESC, id DESC LIMIT ?"
         binds.append(.int(Int64(limit)))
 
         var out: [PrivacyEvent] = []
-        query(sql, binds) { st in
+        let succeeded = query(sql, binds) { st in
             let event = Self.readEvent(st)
             let kind = event.kind
             if let kinds, !kinds.contains(kind) { return }
             out.append(event)
         }
-        return out
+        return succeeded ? out : nil
     }
 
     /// 导出为 CSV(供外部取证 / 报表使用)

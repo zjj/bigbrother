@@ -24,6 +24,9 @@ final class Monitor: ObservableObject {
     }
     @Published private(set) var ignoredAppPermissions: [AppPermissionIgnoreRule] = []
     @Published var recent: [PrivacyEvent] = []
+    @Published private(set) var hasMoreRecent = false
+    @Published private(set) var isLoadingRecent = false
+    private var recentRequestID = 0
     @Published var topActors: [(name: String, n: Int)] = []
     @Published var histogram: [Int] = []
     @Published var histogramEnd = HourlyTimeline.end(after: Date())
@@ -38,7 +41,11 @@ final class Monitor: ObservableObject {
     @Published var tab: PanelTab = .overview
 
     /// 当前筛选(搜索 / 类型 / 进程 / 仅被拒 / 仅高危),由下钻与手动筛选共同驱动
-    @Published var filter = DrillFilter()
+    @Published var filter = DrillFilter() {
+        didSet {
+            if filter != oldValue { refreshRecent(reset: true) }
+        }
+    }
 
     /// 眼睛保持变色多久(秒)。事件滑出这个窗口后颜色自动退回。
     var threatWindow: Double {
@@ -238,8 +245,8 @@ heartbeatTimer?.invalidate()
         return body()
     }
 
-    /// 事件列表一次最多取多少条(界面上的「N 条」要据此判断是否被截断)
-    static let listLimit = 400
+    /// 记录页每批加载的条数。
+    static let pageSize = 50
 
     /// 今日零点
     static var startOfToday: Date { Calendar.current.startOfDay(for: Date()) }
@@ -370,8 +377,8 @@ heartbeatTimer?.invalidate()
 
     func refresh() {
         let store = self.store
-        let f = filter
         let window = threatWindow
+        refreshRecent()
 
         DispatchQueue.global(qos: .utility).async {
             // ── 快查询:每轮都跑(都被时间窗限制,毫秒级)──
@@ -379,15 +386,6 @@ heartbeatTimer?.invalidate()
             let subs  = store.todaySubjects()
             let tt    = store.todayTotal()
             let tot   = store.totalCount()
-            let rec   = store.recentEvents(limit: Self.listLimit,
-                                           minSeverity: f.onlyHighRisk ? 4 : 0,
-                                           onlyDenied: f.onlyDenied,
-                                           kinds: f.kinds.isEmpty ? nil : f.kinds,
-                                           actor: f.actor,
-                                           search: f.search,
-                                           since: f.since,
-                                           subject: f.subject,
-                                           scope: f.scope)
 
             // 分类直接从类型计数推导 —— 这两者本来就是同一个查询,
             // 之前跑了两遍,在 50 万行下白花掉 0.37 秒
@@ -418,7 +416,6 @@ heartbeatTimer?.invalidate()
                 self.totalCount  = tot
                 self.highSeverity = hs
                 self.deniedCount = dn
-                if self.filter == f { self.recent = rec }
                 self.topActors   = top.map { (name: $0.0, n: $0.1) }
                 self.histogram   = hist
                 self.histogramEnd = histEnd
@@ -429,12 +426,32 @@ heartbeatTimer?.invalidate()
     }
 
     /// 筛选变化时只刷新记录列表，避免为一次交互重算所有概览统计。
-    func refreshRecent() {
+    func refreshRecent(reset: Bool = false) {
+        if reset {
+            recentRequestID += 1
+            recent = []
+            hasMoreRecent = false
+            isLoadingRecent = false
+        }
+        guard !isLoadingRecent else { return }
+        fetchRecent(limit: max(Self.pageSize, recent.count), before: nil)
+    }
+
+    func loadMoreRecent() {
+        guard hasMoreRecent, !isLoadingRecent, let last = recent.last else { return }
+        fetchRecent(limit: Self.pageSize, before: last)
+    }
+
+    private func fetchRecent(limit: Int, before: PrivacyEvent?) {
         let store = self.store
         let f = filter
+        recentRequestID += 1
+        let requestID = recentRequestID
+        isLoadingRecent = true
 
         DispatchQueue.global(qos: .userInitiated).async {
-            let rec = store.recentEvents(limit: Self.listLimit,
+            // 多取一条用于判断是否还有下一页，不把它显示到当前批次。
+            let rec = store.recentEventPage(limit: limit + 1, before: before,
                                          minSeverity: f.onlyHighRisk ? 4 : 0,
                                          onlyDenied: f.onlyDenied,
                                          kinds: f.kinds.isEmpty ? nil : f.kinds,
@@ -443,9 +460,19 @@ heartbeatTimer?.invalidate()
                                          since: f.since,
                                          subject: f.subject,
                                          scope: f.scope)
+            let storageError = store.storageError
             DispatchQueue.main.async {
-                guard self.filter == f else { return }
-                self.recent = rec
+                guard self.filter == f, self.recentRequestID == requestID else { return }
+                self.isLoadingRecent = false
+                self.storageError = storageError
+                guard let rec else { return }
+                self.hasMoreRecent = rec.count > limit
+                let page = Array(rec.prefix(limit))
+                if before == nil {
+                    self.recent = page
+                } else {
+                    self.recent.append(contentsOf: page)
+                }
             }
         }
     }
